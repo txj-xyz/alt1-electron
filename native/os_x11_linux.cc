@@ -10,6 +10,8 @@
 #include <thread>
 #include <mutex>
 #include <condition_variable>
+#include <future>
+
 #include "os.h"
 #include "linux/x11.h"
 #include "linux/shm.h"
@@ -202,7 +204,7 @@ void GetRsHandlesRecursively(const xcb_window_t window, std::vector<OSWindow>* o
 	for (auto i = 0; i < xcb_query_tree_children_length(reply); i++) {
 		xcb_window_t child = children[i];
 		if (IsRsWindow(child)) {
-			rsDepthMutex.lock();
+			std::unique_lock<std::mutex> rsDepthLock(rsDepthMutex);
 			// Only take this if it's one of the deepest instances found so far
 			if (depth > rsDepth) {
 				out->clear();
@@ -211,9 +213,8 @@ void GetRsHandlesRecursively(const xcb_window_t window, std::vector<OSWindow>* o
 			} else if (depth == rsDepth) {
 				out->push_back(child);
 			}
-			rsDepthMutex.unlock();
 		}
-		
+
 		GetRsHandlesRecursively(child, out, depth + 1);
 	}
 
@@ -273,38 +274,28 @@ OSWindow OSGetActiveWindow() {
 	return OSWindow(window);
 }
 
-
-// Only for use from the window thread
-struct CondPair {
-	std::condition_variable condvar;
-	std::mutex mutex;
-	bool done;
-	CondPair(): done(false) {}
-	CondPair(CondPair& other): done(other.done) {}
-	CondPair(CondPair&& other): done(other.done) {}
-};
-std::vector<CondPair> condvars;
 template<typename F, typename COND>
 void IterateEvents(COND cond, F callback) {
-	eventMutex.lock();
-	for (auto it = trackedEvents.begin(); it != trackedEvents.end(); it++) {
-		if (cond(*it)) {
-			condvars.push_back(CondPair());
-			CondPair* pair = &*condvars.end();
-			it->callback.BlockingCall([callback, &pair](Napi::Env env, Napi::Function jsCallback) {
-				callback(env, jsCallback);
-				std::unique_lock<std::mutex> lock(pair->mutex);
-				pair->done = true;
-				pair->condvar.notify_all();
-			});
-		}
-	}
-	eventMutex.unlock();
-	for(auto it = condvars.begin(); it != condvars.end(); it++) {
-		std::unique_lock<std::mutex> lock(it->mutex);
-		while(!it->done) it->condvar.wait(lock);
-	}
-	condvars.clear();
+    std::vector<std::future<void>> futures;
+
+    std::unique_lock<std::mutex> eventLock(eventMutex);
+    for (auto& event : trackedEvents) {
+        if (cond(event)) {
+            auto promise = std::make_shared<std::promise<void>>();
+            futures.emplace_back(promise->get_future());
+
+            event.callback.BlockingCall([callback, promise](Napi::Env env, Napi::Function jsCallback) {
+                callback(env, jsCallback);
+                promise->set_value();
+            });
+        }
+    }
+    eventLock.unlock();
+
+    // Wait for all operations to complete
+    for (auto& future : futures) {
+        future.wait();
+    }
 }
 
 void OSSetWindowShape(OSWindow window, std::vector<JSRectangle> rects) {
@@ -338,50 +329,51 @@ bool OSGetMouseState() {
 void OSNewWindowListener(OSWindow window, WindowEventType type, Napi::Function callback) {
 	auto event = TrackedEvent(window.handle, type, callback);
 
-	// If this is a new window, request all its events from X server
-	eventMutex.lock();
-	if (window.handle != 0 && std::find_if(trackedEvents.begin(), trackedEvents.end(), [window](TrackedEvent& e) {return e.window == window.handle;}) == trackedEvents.end()) {
-		constexpr uint32_t values[] = { XCB_EVENT_MASK_STRUCTURE_NOTIFY };
-		xcb_change_window_attributes(connection, window.handle, XCB_CW_EVENT_MASK, values);
-	}
-	
-	// Add the event
-	trackedEvents.push_back(std::move(event));
-	eventMutex.unlock();
+    // If this is a new window, request all its events from X server
+    std::unique_lock<std::mutex> eventLock(eventMutex);
+    if (window.handle != 0 && std::find_if(trackedEvents.begin(), trackedEvents.end(), [window](TrackedEvent& e) {return e.window == window.handle;}) == trackedEvents.end()) {
+        constexpr uint32_t values[] = { XCB_EVENT_MASK_STRUCTURE_NOTIFY };
+        xcb_change_window_attributes(connection, window.handle, XCB_CW_EVENT_MASK, values);
+    }
+
+    // Add the event
+    trackedEvents.push_back(std::move(event));
+    eventLock.unlock();
 
 	// Start a window thread if there wasn't already one running
 	StartWindowThread();
 }
 
 void OSRemoveWindowListener(OSWindow window, WindowEventType type, Napi::Function callback) {
-	eventMutex.lock();
 
-	// If there are no more tracked events for this window, request X server to stop sending any events about it
-	if (window.handle != 0 && std::find_if(trackedEvents.begin(), trackedEvents.end(), [window](TrackedEvent& e) {return e.window == window.handle;}) == trackedEvents.end()) {
-		constexpr uint32_t values[] = { XCB_NONE };
-		xcb_change_window_attributes_checked(connection, window.handle, XCB_CW_EVENT_MASK, values);
-	}
+    std::unique_lock<std::mutex> eventLock(eventMutex);
 
-	bool wait = trackedEvents.size() != 0;
+    // If there are no more tracked events for this window, request X server to stop sending any events about it
+    if (window.handle != 0 && std::find_if(trackedEvents.begin(), trackedEvents.end(), [window](TrackedEvent& e) {return e.window == window.handle;}) == trackedEvents.end()) {
+        constexpr uint32_t values[] = { XCB_NONE };
+        xcb_change_window_attributes_checked(connection, window.handle, XCB_CW_EVENT_MASK, values);
+    }
 
-	// Remove any matching events
-	trackedEvents.erase(
-		std::remove_if(
-			trackedEvents.begin(),
-			trackedEvents.end(),
-			[window, type, callback](TrackedEvent& e){
-				if ((e.window == window.handle) && (e.type == type) && (Napi::Persistent(callback) == e.callbackRef)) {
-					e.callback.Release();
-					return true;
-				}
-				return false;
-			}
-		),
-		trackedEvents.end()
-	);
+    bool wait = trackedEvents.size() != 0;
 
-	wait &= trackedEvents.size() == 0;
-	eventMutex.unlock();
+    // Remove any matching events
+    trackedEvents.erase(
+        std::remove_if(
+            trackedEvents.begin(),
+            trackedEvents.end(),
+            [window, type, callback](TrackedEvent& e){
+                if ((e.window == window.handle) && (e.type == type) && (Napi::Persistent(callback) == e.callbackRef)) {
+                    e.callback.Release();
+                    return true;
+                }
+                return false;
+            }
+        ),
+        trackedEvents.end()
+    );
+
+    wait &= trackedEvents.size() == 0;
+    eventLock.unlock();
 
 	// If the window thread has nothing left to do, send it a wakeup, then wait for it to exit
 	if (wait) {
@@ -394,21 +386,19 @@ void OSRemoveWindowListener(OSWindow window, WindowEventType type, Napi::Functio
 }
 
 bool WindowThreadShouldRun() {
-	eventMutex.lock();
+	std::unique_lock<std::mutex> eventLock(eventMutex);
 	bool anyEvents = trackedEvents.size() != 0;
-	eventMutex.unlock();
 	return anyEvents;
 }
 
 void StartWindowThread() {
 	// Only start if there isn't already a window thread running
-	windowThreadMutex.lock();
+	std::unique_lock<std::mutex> windowThreadLock(windowThreadMutex);
 	if (!windowThreadExists) {
 		windowThreadExists = true;
 		windowThread = std::thread(WindowThread);
 		recordThread = std::thread(RecordThread);
 	}
-	windowThreadMutex.unlock();
 }
 
 // Should only be called from the window thread.
@@ -427,19 +417,20 @@ void HandleNewWindow(const xcb_window_t window, xcb_window_t parent) {
 			depth += 1;
 			free(reply);
 		}
-		rsDepthMutex.lock();
-		if (depth >= rsDepth) {
-			untrack = false;
-			rsDepth = depth;
-			rsDepthMutex.unlock();
+
+        std::unique_lock<std::mutex> rsDepthLock(rsDepthMutex);
+        if (depth >= rsDepth) {
+            untrack = false;
+            rsDepth = depth;
+            rsDepthLock.unlock();
 			IterateEvents(
 				[](const TrackedEvent& e){return e.type == WindowEventType::Show && e.window == 0;},
 				[window](Napi::Env env, Napi::Function callback){callback.Call({Napi::BigInt::New(env, (uint64_t)window), Napi::Number::New(env, XCB_CREATE_NOTIFY)});}
 			);
-		} else {
-			rsDepthMutex.unlock();
-		}
-		
+        } else {
+            rsDepthLock.unlock();
+        }
+
 	}
 
 	if (untrack) {
