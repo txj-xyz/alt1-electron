@@ -30,7 +30,7 @@
 		"autobind-decorator": "^2.4.0",
 		"classnames": "^2.2.6",
 		"css-loader": "^5.0.1",
-		"electron-rebuild": "^3.2.7",
+		"electron-rebuild": "^3.2.9",
 		"file-loader": "^6.2.0",
 		"json-loader": "^0.5.7",
 		"nan": "^2.14.2",
@@ -49,6 +49,8 @@
 		"electron": "^35.5.1",
 		"node-fetch": "^2.6.1",
 		"react": "^17.0.1",
-		"react-dom": "^17.0.1"
-	}
+		"react-dom": "^17.0.1",
+		"sharp": "^0.33.4"
+	},
+	"repository": "https://github.com/skillbert/alt1-electron.git"
 }
