@@ -8,7 +8,7 @@
     flake-utils.lib.eachDefaultSystem (system:
       let
         pkgs = nixpkgs.legacyPackages.${system};
-
+        variant = "debug";
         procpsOrig = pkgs.procps.overrideAttrs (oldAttrs: {
           version = "3.3.17";
           src = pkgs.fetchurl {
@@ -133,16 +133,17 @@
           yarnBuildScript = "electron-rebuild";
 
           yarnBuildFlags = [
-            "-f"
             "-w alt1lite"
             "-c.electronDist=${pkgs.electron}/libexec/electron"
             "-c.electronVersion=${pkgs.electron.version}"
-          ];
+          ] ++ (if variant == "debug" then [ "--debug" ] else [ ]);
 
           installPhase = ''
             runHook preInstall
-            ${pkgs.tree}/bin/tree .
-            yarn build
+            if [ "${variant}" == "debug" ]; then
+              yarn --offline electron-rebuild -f -w alt1lite --only sharp -c.electronDist=${pkgs.electron}/libexec/electron -c.electronVersion=${pkgs.electron.version}
+            fi
+            yarn --offline build --mode development
             # resources
             mkdir -p "$out/share/lib/alt1lite" "$out/bin"
             ls -alh ./build

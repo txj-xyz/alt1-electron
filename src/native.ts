@@ -29,14 +29,16 @@ reloadAddon();
 //(Re)loads the native code, this gives all kinds of mem leaks and other trouble if called more than once, only do so for debugging
 export function reloadAddon() {
 	//TODO fix hardcoded build path
-	let addonpath = path.resolve(__dirname, "../build/Debug/");
+	let addonpath = path.resolve(__dirname, "../build/Release/");
+	let origfile = path.resolve(addonpath, "addon.node");
 
 	//Copy the addon file so we can rebuild while alt1lite is already running
 	if (process.env.NODE_ENV === "development") {
-		let tmpfile = path.resolve(addonpath, "addon" + Math.floor(Math.random() * 1000) + ".node");
-		let origfile = path.resolve(addonpath, "addon.node");
+		let tmpfile = path.resolve("/tmp/", "alt1_addon" + Math.floor(Math.random() * 1000) + ".node");
 		fs.copyFileSync(origfile, tmpfile);
 		addonpath = tmpfile;
+	} else {
+		addonpath = origfile;
 	}
 	native = __non_webpack_require__(addonpath);
 }
@@ -86,7 +88,7 @@ type OSWindowPinEvents = {
 	moved: []
 };
 
-export class OSWindowPin extends TypedEmitter<OSWindowPinEvents>{
+export class OSWindowPin extends TypedEmitter<OSWindowPinEvents> {
 	window: BrowserWindow;
 	oswindow: OSWindow;
 	parent: OSWindow;
