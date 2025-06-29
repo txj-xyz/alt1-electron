@@ -45,6 +45,30 @@ npm run ui
 # emerge --ask --noreplace dev-util/pkgconf x11-libs/libxcb x11-libs/xcb-util-wm sys-process/procps
 ```
 
+### Nix (flake)
+
+To run the flake:
+
+```console
+nix run .#alt1-toolkit
+```
+
+Also works in a .desktop file: (fill in the install dir yourself)
+```console
+[Desktop Entry]
+Name=Alt1Toolkit
+Exec=nix run <INSTALL DIR>#alt1-toolkit -- %u
+Type=Application
+Terminal=false
+Categories=Application;
+Icon=/home/justin/alt1-electron-test/src/imgs/alt1icon.png
+Comment=Launch Alt1 electron toolkit
+StartupWMClass=Alt1Toolkit
+```
+
+
+`nix run github:arroquw/alt1-electron` should also work
+
 # Why rewrite?
 
 ### Clean slate
