@@ -19,51 +19,14 @@
 
         # X11 and other native dependencies from binding.gyp
         x11Deps = with pkgs; [
-          xorg.libxcb
-          xorg.xcbutilwm
-          xorg.xcbutil
-          xorg.xcbutilimage
-          xorg.xcbutilkeysyms
-          xorg.xcbutilrenderutil
-          xorg.xcbproto
-          xorg.libX11
-          xorg.libXcomposite
-          xorg.libXdamage
-          xorg.libXext
-          xorg.libXfixes
-          xorg.libXrandr
-          xorg.libXrender
-          xorg.libXtst
-          libGL
           procpsOrig
           pkg-config
+          xorg.libxcb
+          xorg.xcbutilwm
         ];
 
         # All required system dependencies
-        electronDeps = with pkgs;
-          [
-            mesa
-            pango
-            expat
-            nspr
-            nss
-            cups
-            libdrm
-            dbus
-            glib
-            atk
-            cairo
-            alsa-lib
-            at-spi2-atk
-            libxkbcommon
-            gtk3
-            libappindicator-gtk3
-            libva
-            pipewire
-            libglvnd
-            vips
-            nodejs
-          ] ++ x11Deps;
+        electronDeps = with pkgs; [ vips nodejs ] ++ x11Deps;
 
         src = ./.;
         alt1lite = pkgs.stdenv.mkDerivation (finalAttrs: {
@@ -97,13 +60,7 @@
             doDist = false;
           };
 
-          buildInputs = [
-            pkgs.vips
-            pkgs.vips.dev
-            pkgs.xorg.libxcb
-            pkgs.xorg.xcbutilwm
-            procpsOrig
-          ] ++ electronDeps;
+          buildInputs = electronDeps;
 
           nativeBuildInputs = [
             pkgs.yarnConfigHook
@@ -111,8 +68,6 @@
             pkgs.npmHooks.npmInstallHook
             pkgs.nodejs
             pkgs.typescript
-            pkgs.nodePackages.ts-node
-            pkgs.nodePackages.typescript
             pkgs.pkg-config
             pkgs.makeWrapper
             pkgs.vips
