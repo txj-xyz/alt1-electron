@@ -28,15 +28,15 @@
         # All required system dependencies
         electronDeps = with pkgs; [ vips nodejs ] ++ x11Deps;
 
-        src = ./.;
         alt1lite = pkgs.stdenv.mkDerivation (finalAttrs: {
           pname = "alt1lite";
           version = "0.0.1";
-          inherit src;
+          src = ./.;
+          inherit system;
 
           yarnOfflineCache = pkgs.fetchYarnDeps {
-            yarnLock = src + "/yarn.lock";
-            hash = "sha256-Lj66aS0tXyjDHzVctaPiAZ0YYl+VCyS2bqoRlcnmSr4=";
+            yarnLock = "${finalAttrs.src}" + "/yarn.lock";
+            hash = "sha256-DxQp4bzjZioMrAusx/+beDnUbMQ/qhn/51APjUzEjnw=";
           };
 
           env = {
