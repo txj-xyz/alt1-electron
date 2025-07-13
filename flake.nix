@@ -36,7 +36,7 @@
 
           yarnOfflineCache = pkgs.fetchYarnDeps {
             yarnLock = "${finalAttrs.src}" + "/yarn.lock";
-            hash = "sha256-DxQp4bzjZioMrAusx/+beDnUbMQ/qhn/51APjUzEjnw=";
+            hash = "sha256-Nypb0O3fkTBbj5k74FOOhd739uscLM5H3YQQj2RBnGg=";
           };
 
           env = {
@@ -101,14 +101,18 @@
             yarn --offline build --mode development
             # resources
             mkdir -p "$out/share/lib/alt1lite" "$out/bin"
+            mkdir -p "$out/share/lib/alt1lite/dist/tooltip/"
             ls -alh ./build
-            cp -r ./dist/* "$out/share/lib/alt1lite"
+            cp -r ./dist "$out/share/lib/alt1lite"
             cp -r ./node_modules "$out/share/lib/alt1lite"
-            cp -r ./build "$out/share/lib"
-            cp -r ./bin/* "$out/bin"
+            cp -r ./build "$out/share/lib/alt1lite"
+            ln -s "$out/share/lib/alt1lite/build" "$out/share/lib/build"
+            cp -r ./bin "$out"
+            cp -r ./config.json "$out/share/lib/alt1lite/dist/tooltip/"
+            ln -s "$out/share/lib/alt1lite/dist/tooltip/config.json" "$out/share/lib/alt1lite/dist/config.json"
             # executable wrapper
             makeWrapper '${pkgs.electron}/bin/electron' "$out/bin/alt1lite" \
-              --add-flags "--inspect=9228 $out/share/lib/alt1lite/alt1lite.bundle.js"
+              --add-flags "--inspect=9228 $out/share/lib/alt1lite/dist/alt1lite.bundle.js"
 
             runHook postInstall
           '';
