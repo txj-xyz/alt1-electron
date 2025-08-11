@@ -56,6 +56,19 @@ struct JSRectangle {
 	}
 };
 
+struct JSPoint {
+	int x;
+	int y;
+	JSPoint() = default;
+	JSPoint(int x, int y) :x(x), y(y) {}
+	Napi::Object ToJs(Napi::Env env) const {
+		auto ret = Napi::Object::New(env);
+		ret.Set("x", x);
+		ret.Set("y", y);
+		return ret;
+	}
+};
+
 void fillImageOpaque(void* data, size_t len);
 void flipBGRAtoRGBA(void* data, size_t len);
 void flipBGRAtoRGBA(void* outdata, void* indata, size_t len);

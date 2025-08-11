@@ -109,7 +109,7 @@ class ActiveRightclick {
 	}
 }
 
-export class RsInstance extends TypedEmitter<RsInstanceEvents>{
+export class RsInstance extends TypedEmitter<RsInstanceEvents> {
 	window: OSWindow;
 	overlayWindow: { browser: BrowserWindow, pin: OSWindowPin | null, stalledOverlay: { frameid: number, cmd: OverlayCommand[] }[] } | null;
 	activeRightclick: ActiveRightclick | null = null;
@@ -220,8 +220,15 @@ export class RsInstance extends TypedEmitter<RsInstanceEvents>{
 	}
 
 	alt1Pressed() {
-		let mousescreen = electron.screen.getCursorScreenPoint();
+		// let mousescreen =
+		let temp = this?.overlayWindow?.pin?.getMousePos();
+		let mousescreen = temp !== undefined
+			? temp
+			: electron.screen.getCursorScreenPoint();
 		let mousepos = this.screenToClient(mousescreen);
+		console.log("MOUSESCREEN: ", mousescreen);
+		console.log("MOUSEPOS: ", mousepos);
+
 		let captrect = new Rect(mousepos.x - 300, mousepos.y - 300, 600, 600);
 		captrect.intersect({ x: 0, y: 0, ...this.getClientSize() });
 		if (!captrect.containsPoint(mousepos.x, mousepos.y)) { throw new Error("alt+1 pressed outside client"); }

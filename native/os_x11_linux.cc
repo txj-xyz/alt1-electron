@@ -15,6 +15,7 @@
 #include "os.h"
 #include "linux/x11.h"
 #include "linux/shm.h"
+#include "util.h"
 
 using namespace priv_os_x11;
 
@@ -632,10 +633,16 @@ void RecordThread() {
 						if (button >= 1 && button <= 3) {
 							int16_t click_x = event->root_x;
 							int16_t click_y = event->root_y;
+							JSPoint point = JSPoint(click_x, click_y);
 							xcb_window_t hit = HitTest(click_x, click_y);
 							IterateEvents(
 								[hit](const TrackedEvent& e){return e.type == WindowEventType::Click && e.window == hit;},
-								[](Napi::Env env, Napi::Function callback){callback.Call({});}
+								[point](Napi::Env env, Napi::Function callback){
+									callback.Call({point.ToJs(env)});
+								}
+								// [](Napi::Env env, Napi::Function callback) {
+								// 	callback.Call({});
+								// }
 							);
 						}
 						if(button == 1){
