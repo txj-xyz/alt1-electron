@@ -241,6 +241,7 @@ let getters: PropertyDescriptorMap = {
 	rsScaling: { get() { return getRsInfo().scaling; } },
 	rsLinked: { get() { return true; } }, //can no longer open apps without rs
 	captureMethod: { get() { return getRsInfo().captureMode; } },
+	mousePosition: { get() { return getRsInfo().mousePosition; } },
 	//TODO
 	currentWorld: { get() { return 1; } },
 	lastWorldHop: { get() { return 0; } },

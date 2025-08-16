@@ -156,10 +156,11 @@ export class RsInstance extends TypedEmitter<RsInstanceEvents> {
 			this.activeRightclick.close();
 		}
 		//TODO actually check if it is a rightclick
-		if (true) {
+		if (!native.getMouseState()) {
 			//need to wait for 2 frames to get rendered (doublebuffered)
 			await delay(2 * 50);
-			let mousepos = this.screenToClient(electron.screen.getCursorScreenPoint());
+			let mousescreen = this.overlayWindow?.pin?.getMousePos() ?? electron.screen.getCursorScreenPoint();
+			let mousepos = this.screenToClient(mousescreen);
 			let captrect = new Rect(mousepos.x - 300, mousepos.y - 300, 600, 600);
 			captrect.intersect({ x: 0, y: 0, ...this.getClientSize() });
 			if (captrect.width <= 0 || captrect.height <= 0) {
@@ -221,10 +222,7 @@ export class RsInstance extends TypedEmitter<RsInstanceEvents> {
 
 	alt1Pressed() {
 		// let mousescreen =
-		let temp = this?.overlayWindow?.pin?.getMousePos();
-		let mousescreen = temp !== undefined
-			? temp
-			: electron.screen.getCursorScreenPoint();
+		let mousescreen = this?.overlayWindow?.pin?.getMousePos() ?? electron.screen.getCursorScreenPoint();
 		let mousepos = this.screenToClient(mousescreen);
 		console.log("MOUSESCREEN: ", mousescreen);
 		console.log("MOUSEPOS: ", mousepos);

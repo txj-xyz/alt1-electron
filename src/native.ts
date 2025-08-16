@@ -47,7 +47,8 @@ type windowEvents = {
 	close: () => any,
 	move: (bounds: Rectangle, phase: "start" | "moving" | "end") => any,
 	show: (wnd: BigInt, event: number) => any,
-	click: (pos: { x: number, y: number }) => any
+	click: (pos: { x: number, y: number }) => any,
+	mousemove: (pos: { x: number, y: number }) => any
 };
 
 export function getActiveWindow() {
@@ -120,6 +121,7 @@ export class OSWindowPin extends TypedEmitter<OSWindowPinEvents> {
 		this.parent.on("move", this.onmove);
 		this.parent.on("close", this.onclose);
 		this.parent.on("click", this.onclick);
+		this.parent.on("mousemove", this.onmousemove);
 	}
 	setPinRect(rect: PinRect) {
 		let isleft = rect.pinning.includes("left");
@@ -184,7 +186,13 @@ export class OSWindowPin extends TypedEmitter<OSWindowPinEvents> {
 		}
 	}
 	@boundMethod
-	onclick(pos: { x: number, y: number }) { this.mousepos = pos; }
+	onmousemove(pos: { x: number, y: number }) {
+		this.mousepos = pos;
+	}
+	@boundMethod
+	onclick(pos: { x: number, y: number }) {
+		this.mousepos = pos;
+	}
 	@boundMethod
 	onmove(bounds: Rectangle, phase: "start" | "moving" | "end") {
 		this.synchPosition(bounds);

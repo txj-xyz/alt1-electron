@@ -9,7 +9,8 @@ export type RsClientState = {
 	lastActiveTime: number,
 	ping: number,
 	scaling: number,
-	captureMode: CaptureMode
+	captureMode: CaptureMode,
+	mousePosition: number,
 }
 
 

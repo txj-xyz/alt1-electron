@@ -223,18 +223,20 @@ export function initIpcApi(ipcMain: IpcMain) {
 
 	ipcMain.on("rsbounds", syncwrap((e) => {
 		let client = expectPermittedRsClient(e);
+		let mousePos = client.overlayWindow?.pin?.getMousePos();
 		let state: RsClientState = {
 			active: client.isActive,
 			clientRect: client.window.getClientBounds(),
 			lastActiveTime: client.lastActiveTime,
 			ping: 10,//TODO
 			scaling: 1,//TODO
-			captureMode: settings.captureMode
+			captureMode: settings.captureMode,
+			mousePosition: mousePos !== undefined ? (mousePos.x << 16 | (mousePos.y & 0xFFFF)) : -1,
 		};
 		e.returnValue = { value: state };
 	}));
 
-	ipcMain.handle("capture", (e, x, y, width, height) => {
+	ipcMain.handle("capture", (e: any, x: any, y: any, width: any, height: any) => {
 		let client = expectPermittedRsClient(e);
 		return native.captureWindowMulti(client.window.handle, settings.captureMode, { main: { x, y, width, height } }).main;
 	});

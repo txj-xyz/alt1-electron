@@ -590,7 +590,8 @@ void RecordThread() {
 	xcb_record_range_t range;
 	memset(&range, 0, sizeof(xcb_record_range_t));
 	range.device_events.first = XCB_BUTTON_PRESS;
-	range.device_events.last = XCB_BUTTON_RELEASE;
+	// range.device_events.last = XCB_BUTTON_RELEASE;
+	range.device_events.last  = XCB_MOTION_NOTIFY;
 	xcb_record_client_spec_t client_spec = XCB_RECORD_CS_ALL_CLIENTS;
 	xcb_void_cookie_t cookie = xcb_record_create_context_checked(connection, id, 0, 1, 1, &client_spec, &range);
 	xcb_generic_error_t* error = xcb_request_check(connection, cookie);
@@ -626,11 +627,12 @@ void RecordThread() {
 			int data_len = xcb_record_enable_context_data_length(reply);
 			if (data_len == sizeof(xcb_button_press_event_t)) {
 				xcb_generic_event_t* ev = (xcb_generic_event_t*)data;
-				switch (ev->response_type) {
+				switch (ev->response_type & ~0x80) {
 					case XCB_BUTTON_PRESS: {
 						xcb_button_press_event_t* event = (xcb_button_press_event_t*)ev;
 						auto button = event->detail;
-						if (button >= 1 && button <= 3) {
+						if (button == 1 || button == 3) {
+							isLeftMouseDown = button == 1;
 							int16_t click_x = event->root_x;
 							int16_t click_y = event->root_y;
 							JSPoint point = JSPoint(click_x, click_y);
@@ -640,28 +642,37 @@ void RecordThread() {
 								[point](Napi::Env env, Napi::Function callback){
 									callback.Call({point.ToJs(env)});
 								}
-								// [](Napi::Env env, Napi::Function callback) {
-								// 	callback.Call({});
-								// }
 							);
-						}
-						if(button == 1){
-							isLeftMouseDown = true;
 						}
 						break;
 					}
 					case XCB_BUTTON_RELEASE: {
 						xcb_button_press_event_t* event = (xcb_button_press_event_t*)ev;
 						auto button = event->detail;
-						if(button == 1){
+						if (isLeftMouseDown && button == 1) {
 							isLeftMouseDown = false;
 						}
+						break;
+					}
+					case XCB_MOTION_NOTIFY: {
+						// std::cout << "motion notify" << std::endl;
+						xcb_motion_notify_event_t* event = (xcb_motion_notify_event_t*)ev;
+						int16_t move_x = event->root_x;
+						int16_t move_y = event->root_y;
+						JSPoint point = JSPoint(move_x, move_y);
+						xcb_window_t hit = HitTest(move_x, move_y);
+						IterateEvents(
+							[hit](const TrackedEvent& e){return e.type == WindowEventType::MouseMove && e.window == hit;},
+							[point](Napi::Env env, Napi::Function callback) {
+								callback.Call({point.ToJs(env)});
+							}
+						);
 						break;
 					}
 				}
 			}
 		}
-		free(reply);
+		if (reply) free(reply);
 	}
 
 	xcb_record_disable_context(rec_connection, id);
