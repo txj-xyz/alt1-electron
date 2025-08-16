@@ -70,9 +70,9 @@ JSRectangle OSWindow::GetClientBounds() {
 		return JSRectangle();
 	}
 	auto x = translation->dst_x;
-    auto y = translation->dst_y;
-    auto w = geometry->width;
-    auto h = geometry->height;
+	auto y = translation->dst_y;
+	auto w = geometry->width;
+	auto h = geometry->height;
 	free(geometry);
 	free(translation);
 	return JSRectangle(x, y, w, h);
@@ -251,26 +251,26 @@ OSWindow OSGetActiveWindow() {
 
 template<typename F, typename COND>
 void IterateEvents(COND cond, F callback) {
-    std::vector<std::future<void>> futures;
+	std::vector<std::future<void>> futures;
 
-    std::unique_lock<std::mutex> eventLock(eventMutex);
-    for (auto& event : trackedEvents) {
-        if (cond(event)) {
-            auto promise = std::make_shared<std::promise<void>>();
-            futures.emplace_back(promise->get_future());
+	std::unique_lock<std::mutex> eventLock(eventMutex);
+	for (auto& event : trackedEvents) {
+		if (cond(event)) {
+			auto promise = std::make_shared<std::promise<void>>();
+			futures.emplace_back(promise->get_future());
 
-            event.callback.BlockingCall([callback, promise](Napi::Env env, Napi::Function jsCallback) {
-                callback(env, jsCallback);
-                promise->set_value();
-            });
-        }
-    }
-    eventLock.unlock();
+			event.callback.BlockingCall([callback, promise](Napi::Env env, Napi::Function jsCallback) {
+				callback(env, jsCallback);
+				promise->set_value();
+			});
+		}
+	}
+	eventLock.unlock();
 
-    // Wait for all operations to complete
-    for (auto& future : futures) {
-        future.wait();
-    }
+	// Wait for all operations to complete
+	for (auto& future : futures) {
+		future.wait();
+	}
 }
 
 void OSSetWindowShape(OSWindow window, std::vector<JSRectangle> rects) {
@@ -304,16 +304,16 @@ bool OSGetMouseState() {
 void OSNewWindowListener(OSWindow window, WindowEventType type, Napi::Function callback) {
 	auto event = TrackedEvent(window.handle, type, callback);
 
-    // If this is a new window, request all its events from X server
-    std::unique_lock<std::mutex> eventLock(eventMutex);
-    if (window.handle != 0 && std::find_if(trackedEvents.begin(), trackedEvents.end(), [window](TrackedEvent& e) {return e.window == window.handle;}) == trackedEvents.end()) {
-        constexpr uint32_t values[] = { XCB_EVENT_MASK_STRUCTURE_NOTIFY };
-        xcb_change_window_attributes(connection, window.handle, XCB_CW_EVENT_MASK, values);
-    }
+	// If this is a new window, request all its events from X server
+	std::unique_lock<std::mutex> eventLock(eventMutex);
+	if (window.handle != 0 && std::find_if(trackedEvents.begin(), trackedEvents.end(), [window](TrackedEvent& e) {return e.window == window.handle;}) == trackedEvents.end()) {
+		constexpr uint32_t values[] = { XCB_EVENT_MASK_STRUCTURE_NOTIFY };
+		xcb_change_window_attributes(connection, window.handle, XCB_CW_EVENT_MASK, values);
+	}
 
-    // Add the event
-    trackedEvents.push_back(std::move(event));
-    eventLock.unlock();
+	// Add the event
+	trackedEvents.push_back(std::move(event));
+	eventLock.unlock();
 
 	// Start a window thread if there wasn't already one running
 	StartWindowThread();
@@ -321,34 +321,34 @@ void OSNewWindowListener(OSWindow window, WindowEventType type, Napi::Function c
 
 void OSRemoveWindowListener(OSWindow window, WindowEventType type, Napi::Function callback) {
 
-    std::unique_lock<std::mutex> eventLock(eventMutex);
+	std::unique_lock<std::mutex> eventLock(eventMutex);
 
-    // If there are no more tracked events for this window, request X server to stop sending any events about it
-    if (window.handle != 0 && std::find_if(trackedEvents.begin(), trackedEvents.end(), [window](TrackedEvent& e) {return e.window == window.handle;}) == trackedEvents.end()) {
-        constexpr uint32_t values[] = { XCB_NONE };
-        xcb_change_window_attributes_checked(connection, window.handle, XCB_CW_EVENT_MASK, values);
-    }
+	// If there are no more tracked events for this window, request X server to stop sending any events about it
+	if (window.handle != 0 && std::find_if(trackedEvents.begin(), trackedEvents.end(), [window](TrackedEvent& e) {return e.window == window.handle;}) == trackedEvents.end()) {
+		constexpr uint32_t values[] = { XCB_NONE };
+		xcb_change_window_attributes_checked(connection, window.handle, XCB_CW_EVENT_MASK, values);
+	}
 
-    bool wait = trackedEvents.size() != 0;
+	bool wait = trackedEvents.size() != 0;
 
-    // Remove any matching events
-    trackedEvents.erase(
-        std::remove_if(
-            trackedEvents.begin(),
-            trackedEvents.end(),
-            [window, type, callback](TrackedEvent& e){
-                if ((e.window == window.handle) && (e.type == type) && (Napi::Persistent(callback) == e.callbackRef)) {
-                    e.callback.Release();
-                    return true;
-                }
-                return false;
-            }
-        ),
-        trackedEvents.end()
-    );
+	// Remove any matching events
+	trackedEvents.erase(
+		std::remove_if(
+			trackedEvents.begin(),
+			trackedEvents.end(),
+			[window, type, callback](TrackedEvent& e){
+				if ((e.window == window.handle) && (e.type == type) && (Napi::Persistent(callback) == e.callbackRef)) {
+					e.callback.Release();
+					return true;
+				}
+				return false;
+			}
+		),
+		trackedEvents.end()
+	);
 
-    wait &= trackedEvents.size() == 0;
-    eventLock.unlock();
+	wait &= trackedEvents.size() == 0;
+	eventLock.unlock();
 
 	// If the window thread has nothing left to do, send it a wakeup, then wait for it to exit
 	if (wait) {
@@ -393,18 +393,18 @@ void HandleNewWindow(const xcb_window_t window, xcb_window_t parent) {
 			free(reply);
 		}
 
-        std::unique_lock<std::mutex> rsDepthLock(rsDepthMutex);
-        if (depth >= rsDepth) {
-            untrack = false;
-            rsDepth = depth;
-            rsDepthLock.unlock();
+		std::unique_lock<std::mutex> rsDepthLock(rsDepthMutex);
+		if (depth >= rsDepth) {
+			untrack = false;
+			rsDepth = depth;
+			rsDepthLock.unlock();
 			IterateEvents(
 				[](const TrackedEvent& e){return e.type == WindowEventType::Show && e.window == 0;},
 				[window](Napi::Env env, Napi::Function callback){callback.Call({Napi::BigInt::New(env, (uint64_t)window), Napi::Number::New(env, XCB_CREATE_NOTIFY)});}
 			);
-        } else {
-            rsDepthLock.unlock();
-        }
+		} else {
+			rsDepthLock.unlock();
+		}
 
 	}
 
@@ -419,7 +419,7 @@ void HandleNewWindow(const xcb_window_t window, xcb_window_t parent) {
 void WindowThread() {
 	// Request substructure events for root window
 	constexpr uint32_t rootValues[] = { XCB_EVENT_MASK_SUBSTRUCTURE_NOTIFY };
-    xcb_change_window_attributes(connection, rootWindow, XCB_CW_EVENT_MASK, rootValues);
+	xcb_change_window_attributes(connection, rootWindow, XCB_CW_EVENT_MASK, rootValues);
 
 	xcb_generic_event_t* event;
 	while (WindowThreadShouldRun()) {
@@ -531,12 +531,12 @@ void HitTestRecursively(xcb_window_t window, int16_t x, int16_t y, int16_t offse
 			xcb_shape_get_rectangles(connection, child, 1),
 			xcb_shape_get_rectangles(connection, child, 2),
 		};
-        xcb_shape_get_rectangles_reply_t* rectangles[3] = {
+		xcb_shape_get_rectangles_reply_t* rectangles[3] = {
 			xcb_shape_get_rectangles_reply(connection, rcookie[0], NULL),
 			xcb_shape_get_rectangles_reply(connection, rcookie[1], NULL),
 			xcb_shape_get_rectangles_reply(connection, rcookie[2], NULL),
 		};
-        if (rectangles[0] && rectangles[1] && rectangles[2]) {
+		if (rectangles[0] && rectangles[1] && rectangles[2]) {
 			for(auto j = 0; j < 3; j += 1) {
 				bool hit_shape = false;
 				auto rect_count = xcb_shape_get_rectangles_rectangles_length(rectangles[j]);
@@ -548,8 +548,8 @@ void HitTestRecursively(xcb_window_t window, int16_t x, int16_t y, int16_t offse
 				hit &= hit_shape;
 			}
 		} else {
-            hit = (x >= gx && x < (gx + gw) && y >= gy && y < (gy + gh));
-        }
+			hit = (x >= gx && x < (gx + gw) && y >= gy && y < (gy + gh));
+		}
 		free(rectangles[0]);
 		free(rectangles[1]);
 		free(rectangles[2]);
