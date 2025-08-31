@@ -17,7 +17,6 @@
           };
         });
 
-        # X11 and other native dependencies from binding.gyp
         x11Deps = with pkgs; [
           procpsOrig
           pkg-config
@@ -25,8 +24,56 @@
           xorg.xcbutilwm
         ];
 
-        # All required system dependencies
-        electronDeps = with pkgs; [ vips nodejs ] ++ x11Deps;
+        devDeps = [
+          pkgs.libgbm
+          pkgs.nodejs
+          pkgs.yarn
+          pkgs.python3
+          pkgs.pkg-config
+          pkgs.gnumake
+          pkgs.gcc
+          pkgs.electron
+          pkgs.mesa
+          pkgs.pango
+          pkgs.expat
+          pkgs.nspr
+          pkgs.nss
+          pkgs.cups
+          pkgs.libdrm
+          pkgs.dbus
+          pkgs.glib
+          pkgs.dbus-glib
+          pkgs.atk
+          pkgs.cairo
+          pkgs.alsa-lib
+          pkgs.at-spi2-atk
+          pkgs.libxkbcommon
+          pkgs.xorg.libXcomposite
+          pkgs.xorg.libXrandr
+          pkgs.xorg.libXext
+          pkgs.xorg.libX11
+          pkgs.xorg.libXfixes
+          pkgs.xorg.libxcb
+          pkgs.xorg.libXdamage
+          pkgs.gtk2
+          pkgs.libappindicator-gtk2
+          pkgs.gtk3
+          pkgs.libappindicator-gtk3
+          pkgs.libGL
+          pkgs.libva
+          pkgs.pipewire
+          pkgs.libglvnd
+          pkgs.libudev0-shim
+          pkgs.nodejs
+          pkgs.procps
+          pkgs.pkg-config
+          pkgs.gcc
+
+        ];
+
+        electronDeps = with pkgs;
+          [ vips nodejs (python311.withPackages (ps: [ ps.distutils ])) ]
+          ++ x11Deps;
 
         alt1lite = pkgs.stdenv.mkDerivation (finalAttrs: {
           pname = "alt1lite";
@@ -58,6 +105,7 @@
               pkgs.libtiff
             ];
             doDist = false;
+            NODE_ENV = "";
           };
 
           buildInputs = electronDeps;
@@ -127,19 +175,22 @@
         };
 
         devShells.default = pkgs.mkShell {
-          packages = [
-            pkgs.nodejs
-            pkgs.yarn
-            pkgs.python3
-            pkgs.pkg-config
-            pkgs.make
-            pkgs.gcc
-            pkgs.electron
-          ] ++ electronDeps ++ x11Deps;
+          packages = devDeps ++ electronDeps ++ x11Deps;
+          env = {
+            ELECTRON_VERSION =
+              pkgs.lib.versions.majorMinor pkgs.electron.version;
+            PKG_CONFIG_PATH =
+              pkgs.lib.makeSearchPathOutput "dev" "lib/pkgconfig"
+              (electronDeps ++ x11Deps ++ devDeps);
 
-          ELECTRON_VERSION = pkgs.lib.versions.majorMinor pkgs.electron.version;
-          PKG_CONFIG_PATH = pkgs.lib.makeSearchPathOutput "dev" "lib/pkgconfig"
-            (electronDeps ++ x11Deps);
+            LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath
+              ([ pkgs.vips pkgs.glib pkgs.libpng pkgs.libjpeg pkgs.libtiff ]
+                ++ devDeps);
+            doDist = false;
+            PYTHON = "${pkgs.python311}/bin/python3.11";
+            CXXFLAGS = "-std=gnu++17";
+            NODE_ENV = "development";
+          };
         };
 
         formatter.${system} = pkgs.nixfmt;
