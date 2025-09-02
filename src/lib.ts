@@ -1,7 +1,7 @@
 import * as path from "path";
 import * as fs from "fs";
 import { shell } from "electron";
-import { ImageData } from "@alt1/base";
+import { ImageData } from "alt1";
 
 declare global {
 	//TODO webpack npm package should fix this
@@ -13,7 +13,6 @@ export class UserError extends Error { }
 
 export const schemestring = "alt1lite";
 export const weborigin = "https://runeapps.org";
-export const configFile = "./config.json";
 
 //needed because node-fetch tries to be correct by choking on BOM
 export async function readJsonWithBOM(res: { text(): Promise<string> }) {
@@ -38,7 +37,7 @@ export function relPath(relpath: string) {
 
 export function patchImageDataShow() {
 	if (process.env.NODE_ENV === "development") {
-		(ImageData.prototype.show as any) = function (this: ImageData) { showImageData(this); }
+		(ImageData.prototype.show as any) = function(this: ImageData) { showImageData(this); }
 	}
 }
 

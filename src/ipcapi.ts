@@ -1,11 +1,11 @@
-import * as a1lib from "@alt1/base/dist";
+import * as a1lib from "alt1";
 import { IpcMain, IpcMainEvent, IpcMainInvokeEvent, screen } from "electron/main"
-import { identifyApp } from "./appconfig";
 import { sameDomainResolve } from "./lib";
-import { fixTooltip, getManagedAppWindow, ManagedWindow } from "./main";
+import { admins, fixTooltip, getManagedAppWindow, ManagedWindow, openApp } from "./main";
 import { native } from "./native";
 import { settings } from "./settings";
 import { FlatImageData, OverlayCommand, Rectangle, RsClientState } from "./shared";
+import { rsInstances } from "./rsinstance";
 
 const snapdistance = 10;
 const snapcornerlength = 30;
@@ -18,6 +18,20 @@ function expectAppWindow(e: IpcMainEvent | IpcMainInvokeEvent) {
 	return wnd;
 }
 
+function expectPermittedRsClient(e: IpcMainEvent | IpcMainInvokeEvent) {
+	let wnd = getManagedAppWindow(e.sender.id);
+	if (wnd) { return wnd.rsClient; }
+	if (admins.has(e.sender.id)) {
+		let instance = rsInstances[0];
+		if (!instance) { throw new Error("no rs clients bound"); }
+		return instance;
+	}
+	throw new Error("Browser context has no permitted RS Client");
+}
+
+function isAdmin(e: IpcMainEvent | IpcMainInvokeEvent) {
+	return admins.has(e.sender.id);
+}
 
 function detectCornerEdge(img: FlatImageData, rect: a1lib.Rect, hor: boolean, reverse: boolean, thresh: number) {
 	if (!hor) {
@@ -191,7 +205,7 @@ export function initIpcApi(ipcMain: IpcMain) {
 	ipcMain.on("identifyapp", async (e, configurl) => {
 		try {
 			let url = sameDomainResolve(e.sender.getURL(), configurl);
-			await identifyApp(url);
+			await settings.appconfig.identifyApp(url);
 		} catch (e) {
 			console.error(e);
 		}
@@ -199,8 +213,8 @@ export function initIpcApi(ipcMain: IpcMain) {
 
 	ipcMain.on("capturesync", (e, x, y, width, height) => {
 		try {
-			let wnd = expectAppWindow(e);
-			let capt = native.captureWindowMulti(wnd.rsClient.window.handle, settings.captureMode, { main: { x, y, width, height } });
+			let client = expectPermittedRsClient(e);
+			let capt = native.captureWindowMulti(client.window.handle, settings.captureMode, { main: { x, y, width, height } });
 			e.returnValue = { value: { width, height, data: capt.main } };
 		} catch (err) {
 			e.returnValue = { error: "" + err };
@@ -208,26 +222,28 @@ export function initIpcApi(ipcMain: IpcMain) {
 	});
 
 	ipcMain.on("rsbounds", syncwrap((e) => {
-		let wnd = expectAppWindow(e);
+		let client = expectPermittedRsClient(e);
+		let mousePos = client.overlayWindow?.pin?.getMousePos();
 		let state: RsClientState = {
-			active: wnd.rsClient.isActive,
-			clientRect: wnd.rsClient.window.getClientBounds(),
-			lastActiveTime: wnd.rsClient.lastActiveTime,
+			active: client.isActive,
+			clientRect: client.window.getClientBounds(),
+			lastActiveTime: client.lastActiveTime,
 			ping: 10,//TODO
 			scaling: 1,//TODO
-			captureMode: settings.captureMode
+			captureMode: settings.captureMode,
+			mousePosition: mousePos !== undefined ? (mousePos.x << 16 | (mousePos.y & 0xFFFF)) : -1,
 		};
 		e.returnValue = { value: state };
 	}));
 
-	ipcMain.handle("capture", (e, x, y, width, height) => {
-		let wnd = expectAppWindow(e);
-		return native.captureWindowMulti(wnd.rsClient.window.handle, settings.captureMode, { main: { x, y, width, height } }).main;
+	ipcMain.handle("capture", (e: any, x: any, y: any, width: any, height: any) => {
+		let client = expectPermittedRsClient(e);
+		return native.captureWindowMulti(client.window.handle, settings.captureMode, { main: { x, y, width, height } }).main;
 	});
 
 	ipcMain.handle("capturemulti", (e, rects: { [key: string]: Rectangle }) => {
-		let wnd = expectAppWindow(e);
-		return native.captureWindowMulti(wnd.rsClient.window.handle, settings.captureMode, rects);
+		let client = expectPermittedRsClient(e);
+		return native.captureWindowMulti(client.window.handle, settings.captureMode, rects);
 	});
 
 	ipcMain.on("settooltip", syncwrap((e, text: string) => {
@@ -250,4 +266,39 @@ export function initIpcApi(ipcMain: IpcMain) {
 	ipcMain.on("shape", syncwrap((e, wnd: BigInt, rects: Rectangle[]) => {
 		native.setWindowShape(wnd, rects);
 	}));
+
+	ipcMain.handle("openapp", async (e, url) => {
+		if (isAdmin(e)) {
+			let app = settings.bookmarks.find(a => a.configUrl == url);
+			if (app) {
+				openApp(app);
+			} else {
+				console.log(`Cannot find app in bookmarks ${url}`);
+			}
+		}
+	});
+
+	ipcMain.handle("removeapp", async (e, url) => {
+		if (isAdmin(e)) {
+			settings.appconfig.uninstallApp(url);
+		}
+	});
+
+	ipcMain.handle("installapp", async (e, url) => {
+		if (isAdmin(e)) {
+			await settings.appconfig.identifyApp(new URL(url));
+		}
+	});
+
+	ipcMain.handle("getsettings", (e) => {
+		if (isAdmin(e)) {
+			return settings.settings;
+		}
+	});
+
+	ipcMain.handle("setcapturemode", (e, newmode) => {
+		if (isAdmin(e)) {
+			settings.captureMode = newmode;
+		}
+	})
 }

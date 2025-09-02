@@ -1,7 +1,7 @@
 {
 	"compilerOptions": {
-		"moduleResolution": "node",
-		"module": "commonjs",
+		"moduleResolution": "bundler",
+		"module": "preserve",
 		"lib": [ "es6", "dom" ],
 		"target": "es6",
 		"sourceMap": true,
@@ -11,7 +11,8 @@
 		"baseUrl": ".",
 		"strictNullChecks": true,
 		"strictPropertyInitialization": false,
-		"experimentalDecorators": true
+		"experimentalDecorators": true,
+		"skipLibCheck": true
 	},
 	"exclude": [ "node_modules", "types", "dist" ],
 	"compileOnSave": false,

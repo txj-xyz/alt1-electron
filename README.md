@@ -13,7 +13,7 @@ npm i
 # You can then build and debug using that project and IDE
 npm run native
 
-# auto-build typescript/webpack
+# auto-build typescript/webpack (requires nodejs >22.6)
 npm run watch
 
 # Run
@@ -44,6 +44,30 @@ npm run ui
 ```console
 # emerge --ask --noreplace dev-util/pkgconf x11-libs/libxcb x11-libs/xcb-util-wm sys-process/procps
 ```
+
+### Nix (flake)
+
+To run the flake:
+
+```console
+nix run .#alt1-toolkit
+```
+
+Also works in a .desktop file: (fill in the install dir yourself)
+```console
+[Desktop Entry]
+Name=Alt1Toolkit
+Exec=nix run <INSTALL DIR>#alt1-toolkit -- %u
+Type=Application
+Terminal=false
+Categories=Application;
+Icon=<INSTALL DIR>/src/imgs/alt1icon.png
+Comment=Launch Alt1 electron toolkit
+StartupWMClass=Alt1Toolkit
+```
+
+
+`nix run github:arroquw/alt1-electron` should also work
 
 # Why rewrite?
 
@@ -91,13 +115,13 @@ See [contributing.md](./contributing.md) for information on how to contribute to
 - [ ] Rewrite and publish OpenGL capture
 - [ ] App resize visual snapping
 - [ ] Shippableness in general
-- [ ] alt+1 hotkey
-	- [ ] app triggers
+- [x] alt+1 hotkey
+	- [x] app triggers
 - [ ] statusdaemon
 - [ ] Independent modules
 	- [ ] Screenshot sharing (alt+2)
 	- [ ] Window manipulation tool (alt+3)
-	
+
 **Platform specific**
 - [x] Windows
 	- [x] Basics
@@ -132,7 +156,6 @@ See [contributing.md](./contributing.md) for information on how to contribute to
 - Enable contextisolation in appwindow
 - Try to move RS specific constants from native code to ts/config files
 - Think some more about the name
-
 
 # Extension projects
 These concepts don't exist in C# Alt1 but are now possible.

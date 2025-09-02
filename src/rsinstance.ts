@@ -8,7 +8,7 @@ import { TypedEmitter } from "./typedemitter";
 import { boundMethod } from "autobind-decorator";
 import { AppPermission, settings } from "./settings";
 import { openApp, managedWindows, selectAppContexts } from "./main";
-import { Alt1EventType, ImgRef, ImgRefData, PointLike, Rect, RectLike } from "@alt1/base";
+import { Alt1EventType, ImgRef, ImgRefData, PointLike, Rect, RectLike } from "alt1";
 import { readAnything } from "./readers/alt1reader";
 import RightClickReader from "./readers/rightclick";
 
@@ -109,7 +109,7 @@ class ActiveRightclick {
 	}
 }
 
-export class RsInstance extends TypedEmitter<RsInstanceEvents>{
+export class RsInstance extends TypedEmitter<RsInstanceEvents> {
 	window: OSWindow;
 	overlayWindow: { browser: BrowserWindow, pin: OSWindowPin | null, stalledOverlay: { frameid: number, cmd: OverlayCommand[] }[] } | null;
 	activeRightclick: ActiveRightclick | null = null;
@@ -156,10 +156,11 @@ export class RsInstance extends TypedEmitter<RsInstanceEvents>{
 			this.activeRightclick.close();
 		}
 		//TODO actually check if it is a rightclick
-		if (true) {
+		if (!native.getMouseState()) {
 			//need to wait for 2 frames to get rendered (doublebuffered)
 			await delay(2 * 50);
-			let mousepos = this.screenToClient(electron.screen.getCursorScreenPoint());
+			let mousescreen = this.overlayWindow?.pin?.getMousePos() ?? electron.screen.getCursorScreenPoint();
+			let mousepos = this.screenToClient(mousescreen);
 			let captrect = new Rect(mousepos.x - 300, mousepos.y - 300, 600, 600);
 			captrect.intersect({ x: 0, y: 0, ...this.getClientSize() });
 			if (captrect.width <= 0 || captrect.height <= 0) {
@@ -220,8 +221,12 @@ export class RsInstance extends TypedEmitter<RsInstanceEvents>{
 	}
 
 	alt1Pressed() {
-		let mousescreen = electron.screen.getCursorScreenPoint();
+		// let mousescreen =
+		let mousescreen = this?.overlayWindow?.pin?.getMousePos() ?? electron.screen.getCursorScreenPoint();
 		let mousepos = this.screenToClient(mousescreen);
+		console.log("MOUSESCREEN: ", mousescreen);
+		console.log("MOUSEPOS: ", mousepos);
+
 		let captrect = new Rect(mousepos.x - 300, mousepos.y - 300, 600, 600);
 		captrect.intersect({ x: 0, y: 0, ...this.getClientSize() });
 		if (!captrect.containsPoint(mousepos.x, mousepos.y)) { throw new Error("alt+1 pressed outside client"); }
@@ -269,7 +274,7 @@ export class RsInstance extends TypedEmitter<RsInstanceEvents>{
 
 			let pin: OSWindowPin = new OSWindowPin(browser, this.window, "cover");
 			browser.loadFile(path.resolve(__dirname, "overlayframe/index.html"));
-			browser.on("closed", e => {
+			browser.on("closed", () => {
 				pin.unpin();
 				this.overlayWindow = null;
 				console.log("overlay closed");
@@ -277,7 +282,7 @@ export class RsInstance extends TypedEmitter<RsInstanceEvents>{
 			browser.once("ready-to-show", () => {
 				browser.show();
 			});
-			browser.webContents.once("dom-ready", e => {
+			browser.webContents.once("dom-ready", () => {
 				for (let stalled of this.overlayWindow!.stalledOverlay) {
 					browser.webContents.send("overlay", stalled.frameid, stalled.cmd);
 				}

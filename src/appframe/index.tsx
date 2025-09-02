@@ -4,7 +4,7 @@ import { useState, useLayoutEffect, useRef } from "react";
 import { render } from "react-dom";
 import { ipcRenderer, WebContents } from "electron";
 import * as remote from "@electron/remote";
-import type { RectLike } from "@alt1/base";
+import type { RectLike } from "alt1";
 import classnames from "classnames";
 
 import "./style.scss";
@@ -39,10 +39,10 @@ function AppFrame(p: {}) {
 		//view.webpreferences = "sandbox,contextIsolation=true";
 		view.webpreferences = "sandbox,contextIsolation=false";
 		gridel.current!.appendChild(view);
-		view.addEventListener("dom-ready", e => {
+		view.addEventListener("dom-ready", () => {
 			//TODO is there a better way to get a ref to the frame?
 			thiswindow.appFrameId = view.getWebContentsId();
-			appcontents = remote.webContents.fromId(appview!.getWebContentsId());
+			appcontents = remote.webContents.fromId(appview!.getWebContentsId()) ?? null;
 		});
 
 		appview = view;
@@ -81,9 +81,9 @@ function AppFrame(p: {}) {
 				<BorderEl ver="bot" hor="right" />
 			</div>
 			<div className="buttonroot" ref={buttonroot}>
-				<div className="button" onClick={e => close()} />
-				<div className="button" onClick={e => setMinimized(!minimized)} />
-				<div className="button" onMouseDown={toggleDevTools} />
+				<div className="button button-close" onClick={e => close()} />
+				<div className={`button ${minimized ? "button-restore" : "button-minimize"}`} onClick={e => setMinimized(!minimized)} />
+				<div className="button button-settings" onMouseDown={toggleDevTools} />
 				<div className="dragbutton" onMouseDown={e => startDrag(e, true, true, true, true)} />
 			</div>
 		</div>

@@ -4,12 +4,10 @@ import * as path from "path";
 import { Menu, Tray } from "electron/main";
 import { MenuItemConstructorOptions, nativeImage } from "electron/common";
 import { handleSchemeArgs } from "./schemehandler";
-import { patchImageDataShow, relPath, sameDomainResolve, schemestring } from "./lib";
-import { identifyApp } from "./appconfig";
-import { getActiveWindow, native, OSWindow, OSWindowPin, reloadAddon } from "./native";
+import { patchImageDataShow, relPath, schemestring } from "./lib";
+import { getActiveWindow, OSWindow, OSWindowPin, reloadAddon } from "./native";
 import { detectInstances, getRsInstanceFromWnd, RsInstance, rsInstances, initRsInstanceTracking, stopRsInstanceTracking } from "./rsinstance";
-import { OverlayCommand, Rectangle, RsClientState } from "./shared";
-import { AppPermission, Bookmark, loadSettings, saveSettings, settings } from "./settings";
+import { AppPermission, Bookmark, settings } from "./settings";
 import { boundMethod } from "autobind-decorator";
 import * as remoteMain from "@electron/remote/main";
 import { initIpcApi } from "./ipcapi";
@@ -21,6 +19,7 @@ if (process.env.NODE_ENV === "development") {
 	(global as any).Alt1lite = require("./main");
 }
 
+export const admins = new Set<number>();
 export const managedWindows: ManagedWindow[] = [];
 export function getManagedWindow(w: WebContents) { return managedWindows.find(q => q.window.webContents == w); }
 export function getManagedAppWindow(id: number) { return managedWindows.find(q => q.appFrameId == id || q.window.webContents.id == id); }
@@ -38,20 +37,41 @@ app.on("browser-window-created", (e, wnd) => {
 const originalCwd = process.cwd();
 process.chdir(__dirname);
 if (!app.requestSingleInstanceLock()) { app.exit(); }
-app.setAsDefaultProtocolClient(schemestring, undefined, [__non_webpack_require__.main!.filename]);
+
+// protocol scheme
+// getApplicationInfoForProtocol is not defined on linux
+app.getApplicationInfoForProtocol?.(schemestring)
+	.then(info => console.log("current alt1 protocol handler:", info))
+	.catch(e => console.log("current alt1 protocol check failed ", e.message));
+if (app.setAsDefaultProtocolClient?.(schemestring, undefined, process.argv.filter(q => !q.startsWith("--inspect-brk")))) {
+	console.log(`protocol handler for ${schemestring} registered successfully`);
+} else {
+	console.log(`failed to register handler for ${schemestring}`)
+}
 handleSchemeArgs(process.argv);
-loadSettings();
+
+settings.loadOrFetch();
+settings.on("changed", () => {
+	for (let admin of selectAdminContexts()) {
+		admin.send("settings-changed");
+	}
+	updateTray();
+});
 remoteMain.initialize();
 
 app.on("before-quit", e => {
 	rsInstances.forEach(c => c.close());
 	stopRsInstanceTracking();
-	saveSettings();
+	settings.save();
 });
 app.on("second-instance", (e, argv, cwd) => handleSchemeArgs(argv));
-app.on("window-all-closed", e => e.preventDefault());
+app.on("window-all-closed", () => {
+	// existance of this listener prevent electron default behavior of closing
+});
 app.once("ready", () => {
-	globalShortcut.register("Alt+1", alt1Pressed);
+	if (!globalShortcut.register("Alt+1", alt1Pressed)) {
+		console.log("failed to register alt+1 hotkey");
+	}
 	drawTray();
 	initIpcApi(ipcMain);
 	initRsInstanceTracking();
@@ -96,10 +116,17 @@ export class ManagedWindow {
 				pinning: ["top", "left"]
 			};
 			app.lastRect = posrect;
+			settings.appconfig.emit("changed");
 		}
 
 		this.window = new BrowserWindow({
-			webPreferences: { nodeIntegration: true, webviewTag: true, contextIsolation: false },
+			webPreferences: {
+				nodeIntegration: true,
+				webviewTag: true,
+				contextIsolation: false,
+				nodeIntegrationInSubFrames: false,
+				nodeIntegrationInWorker: false
+			},
 			frame: false,
 			width: posrect.width,
 			height: posrect.height,
@@ -112,6 +139,7 @@ export class ManagedWindow {
 			show: false,
 		});
 		remoteMain.enable(this.window.webContents);
+		// this.window.webContents.openDevTools({ mode: "detach" });
 
 		this.nativeWindow = new OSWindow(this.window.getNativeWindowHandle());
 		this.rsClient = rsclient;
@@ -121,6 +149,7 @@ export class ManagedWindow {
 		this.windowPin.once("close", () => {
 			this.window.close();
 			app.wasOpen = true;
+			settings.appconfig.emit("changed");
 		});
 		this.windowPin.setPinRect(posrect);
 
@@ -141,12 +170,7 @@ export class ManagedWindow {
 	}
 }
 
-function drawTray() {
-	if (!tray) {
-		tray = new Tray(alt1icon);
-		tray.on("click", e => tray!.popUpContextMenu());
-	}
-	tray.setToolTip("Alt1 Lite");
+function updateTray() {
 	let menu: MenuItemConstructorOptions[] = [];
 	for (let app of settings.bookmarks) {
 		menu.push({
@@ -174,7 +198,16 @@ function drawTray() {
 	menu.push({ label: "Settings", click: showSettings });
 	menu.push({ label: "Exit", click: e => app.quit() });
 	let menuinst = Menu.buildFromTemplate(menu);
-	tray.setContextMenu(menuinst);
+	tray?.setContextMenu(menuinst);
+}
+
+function drawTray() {
+	if (!tray) {
+		tray = new Tray(alt1icon);
+		tray.on("click", e => tray!.popUpContextMenu());
+	}
+	tray.setToolTip("Alt1 Lite");
+	updateTray();
 }
 
 let settingsWnd: BrowserWindow | null = null;
@@ -187,8 +220,12 @@ export function showSettings() {
 		webPreferences: { nodeIntegration: true, webviewTag: true, contextIsolation: false },
 	});
 	settingsWnd.loadFile(path.resolve(__dirname, "settings/index.html"));
-	settingsWnd.once("closed", e => settingsWnd = null);
+	settingsWnd.once("close", () => {
+		admins.delete(settingsWnd!.webContents.id);
+		settingsWnd = null;
+	});
 	remoteMain.enable(settingsWnd.webContents);
+	admins.add(settingsWnd.webContents.id);
 }
 
 //TODO add permission
@@ -199,7 +236,20 @@ export function* selectAppContexts(rsinstance: RsInstance | null, permission: Ap
 		if (permission && !wnd.appConfig.permissions.includes(permission)) { continue; }
 		if (wnd.appFrameId == -1) { continue; }
 		let webcontent = electron.webContents.fromId(wnd.appFrameId);
+		if (!webcontent) {
+			console.log("webcontent empty, this should not be possible");
+			continue;
+		}
 		yield webcontent;
+	}
+}
+
+export function* selectAdminContexts() {
+	for (let admin of admins) {
+		let webcontent = electron.webContents.fromId(admin);
+		if (webcontent) {
+			yield webcontent;
+		}
 	}
 }
 
@@ -224,11 +274,11 @@ class TooltipWindow {
 		wnd.once("ready-to-show", () => {
 			wnd.show();
 		});
-		wnd.webContents.once("dom-ready", e => {
+		wnd.webContents.once("dom-ready", () => {
 			this.loaded = true;
 			this.setTooltip(this.text);
 		});
-		wnd.on("closed", e => {
+		wnd.on("closed", () => {
 			if (this.interval) { clearInterval(this.interval) }
 			tooltipWindow = null;
 		});

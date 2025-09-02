@@ -29,14 +29,17 @@ reloadAddon();
 //(Re)loads the native code, this gives all kinds of mem leaks and other trouble if called more than once, only do so for debugging
 export function reloadAddon() {
 	//TODO fix hardcoded build path
-	let addonpath = path.resolve(__dirname, "../build/Debug/");
-
+	let addonpath = path.resolve(__dirname, "../build/Release/");
+	let origfile = path.resolve(addonpath, "addon.node");
 	//Copy the addon file so we can rebuild while alt1lite is already running
 	if (process.env.NODE_ENV === "development") {
-		let tmpfile = path.resolve(addonpath, "addon" + Math.floor(Math.random() * 1000) + ".node");
-		let origfile = path.resolve(addonpath, "addon.node");
+		addonpath = path.resolve(__dirname, "../build/Debug/");
+		origfile = path.resolve(addonpath, "addon.node");
+		let tmpfile = path.resolve("/tmp/", "alt1_addon" + Math.floor(Math.random() * 1000) + ".node");
 		fs.copyFileSync(origfile, tmpfile);
 		addonpath = tmpfile;
+	} else {
+		addonpath = origfile;
 	}
 	native = __non_webpack_require__(addonpath);
 }
@@ -45,7 +48,8 @@ type windowEvents = {
 	close: () => any,
 	move: (bounds: Rectangle, phase: "start" | "moving" | "end") => any,
 	show: (wnd: BigInt, event: number) => any,
-	click: () => any
+	click: (pos: { x: number, y: number }) => any,
+	mousemove: (pos: { x: number, y: number }) => any
 };
 
 export function getActiveWindow() {
@@ -67,13 +71,20 @@ export class OSWindow {
 	getBounds() { return native.getWindowBounds(this.handle); }
 	getClientBounds() { return native.getClientBounds(this.handle); }
 	setParent(parent: OSWindow | null) { return native.setWindowParent(this.handle, parent ? parent.handle : BigInt(0)) }
-
 	on<T extends keyof windowEvents>(type: T, cb: windowEvents[T]) {
 		native.newWindowListener(this.handle, type, cb);
 	}
 	removeListener<T extends keyof windowEvents>(type: T, cb: windowEvents[T]) {
 		native.removeWindowListener(this.handle, type, cb);
 	}
+
+
+
+	// @boundMethod
+	// onclick(pos: { x: number, y: number }) {
+	// this.syncMousePosition(pos);
+	// }
+
 }
 
 //can mean different things depending on context
@@ -86,7 +97,8 @@ type OSWindowPinEvents = {
 	moved: []
 };
 
-export class OSWindowPin extends TypedEmitter<OSWindowPinEvents>{
+export class OSWindowPin extends TypedEmitter<OSWindowPinEvents> {
+	mousepos: { x: number, y: number };
 	window: BrowserWindow;
 	oswindow: OSWindow;
 	parent: OSWindow;
@@ -109,6 +121,8 @@ export class OSWindowPin extends TypedEmitter<OSWindowPinEvents>{
 		native.setWindowParent(this.oswindow.handle, parent.handle);
 		this.parent.on("move", this.onmove);
 		this.parent.on("close", this.onclose);
+		this.parent.on("click", this.onclick);
+		this.parent.on("mousemove", this.onmousemove);
 	}
 	setPinRect(rect: PinRect) {
 		let isleft = rect.pinning.includes("left");
@@ -132,6 +146,10 @@ export class OSWindowPin extends TypedEmitter<OSWindowPinEvents>{
 			pinning: [this.pinver, this.pinhor]
 		};
 		return r;
+	}
+	getMousePos() { return this.mousepos; }
+	syncMousePosition(pos: { x: number, y: number }) {
+		this.mousepos = pos;
 	}
 	unpin() {
 		native.setWindowParent(this.oswindow.handle, BigInt(0));
@@ -167,6 +185,14 @@ export class OSWindowPin extends TypedEmitter<OSWindowPinEvents>{
 			let bounds = this.parent.getClientBounds();
 			this.window.setBounds({ x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height });
 		}
+	}
+	@boundMethod
+	onmousemove(pos: { x: number, y: number }) {
+		this.mousepos = pos;
+	}
+	@boundMethod
+	onclick(pos: { x: number, y: number }) {
+		this.mousepos = pos;
 	}
 	@boundMethod
 	onmove(bounds: Rectangle, phase: "start" | "moving" | "end") {

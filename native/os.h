@@ -85,12 +85,13 @@ OSWindow OSGetActiveWindow();
 bool OSGetMouseState();
 
 
-enum class WindowEventType { Move, Close, Show, Click };
+enum class WindowEventType { Move, Close, Show, Click, MouseMove };
 const std::map<std::string, WindowEventType> windowEventTypes = {
 	{"move",WindowEventType::Move},
 	{"close",WindowEventType::Close},
 	{"show",WindowEventType::Show},
-	{"click",WindowEventType::Click}
+	{"click",WindowEventType::Click},
+	{"mousemove",WindowEventType::MouseMove}
 };
 
 /**

@@ -10,9 +10,12 @@
 #include <thread>
 #include <mutex>
 #include <condition_variable>
+#include <future>
+
 #include "os.h"
 #include "linux/x11.h"
 #include "linux/shm.h"
+#include "util.h"
 
 using namespace priv_os_x11;
 
@@ -67,9 +70,9 @@ JSRectangle OSWindow::GetClientBounds() {
 		return JSRectangle();
 	}
 	auto x = translation->dst_x;
-    auto y = translation->dst_y;
-    auto w = geometry->width;
-    auto h = geometry->height;
+	auto y = translation->dst_y;
+	auto w = geometry->width;
+	auto h = geometry->height;
 	free(geometry);
 	free(translation);
 	return JSRectangle(x, y, w, h);
@@ -138,12 +141,25 @@ bool IsRsWindow(const xcb_window_t window) {
 			memcpy(buffer, xcb_get_property_value(replyProp), len);
 			// first is instance name, then class name - both null terminated. we want class name.
 			const char* classname = buffer + strlen(buffer) + 1;
-			if (strcmp(classname, "RuneScape") == 0 || strcmp(classname, "steam_app_1343400") == 0) {
+			if (strcmp(classname, "RuneScape") == 0 || strcmp(classname, "steam_app_1343400") == 0 || strcmp(classname, "steam_proton") == 0 || strcmp(classname, "rs2client.exe") == 0) {
 				auto replyTransient = xcb_get_property_reply(connection, cookieTransient, NULL);
-				if (replyTransient && xcb_get_property_value_length(replyTransient) == 0) {
-					free(replyProp);
-					return true;
+				xcb_get_property_cookie_t cookie = xcb_get_property_unchecked(connection, 0, window, XCB_ATOM_WM_NAME, XCB_ATOM_STRING, 0, 100);
+				std::unique_ptr<xcb_get_property_reply_t, decltype(&free)> reply { xcb_get_property_reply(connection, cookie, NULL), &free };
+				if(reply) {
+					char* title = reinterpret_cast<char*>(xcb_get_property_value(reply.get()));
+					int length = xcb_get_property_value_length(reply.get());
+					auto str_title = std::string(title, length);
+					/* Covers both normal and compatibility mode (substring of RuneScape (compatibility mode) )*/
+					if (str_title.compare(0, sizeof("RuneScape") - 1, "RuneScape") == 0) {
+						if (replyTransient && xcb_get_property_value_length(replyTransient) == 0) {
+							free(replyProp);
+							return true;
+						} else {
+							std::cout << "NonTransient window found: " << str_title << std::endl;
+						}
+					}
 				}
+
 			}
 		}
 	}
@@ -163,7 +179,7 @@ void GetRsHandlesRecursively(const xcb_window_t window, std::vector<OSWindow>* o
 	for (auto i = 0; i < xcb_query_tree_children_length(reply); i++) {
 		xcb_window_t child = children[i];
 		if (IsRsWindow(child)) {
-			rsDepthMutex.lock();
+			std::unique_lock<std::mutex> rsDepthLock(rsDepthMutex);
 			// Only take this if it's one of the deepest instances found so far
 			if (depth > rsDepth) {
 				out->clear();
@@ -172,9 +188,8 @@ void GetRsHandlesRecursively(const xcb_window_t window, std::vector<OSWindow>* o
 			} else if (depth == rsDepth) {
 				out->push_back(child);
 			}
-			rsDepthMutex.unlock();
 		}
-		
+
 		GetRsHandlesRecursively(child, out, depth + 1);
 	}
 
@@ -234,38 +249,28 @@ OSWindow OSGetActiveWindow() {
 	return OSWindow(window);
 }
 
-
-// Only for use from the window thread
-struct CondPair {
-	std::condition_variable condvar;
-	std::mutex mutex;
-	bool done;
-	CondPair(): done(false) {}
-	CondPair(CondPair& other): done(other.done) {}
-	CondPair(CondPair&& other): done(other.done) {}
-};
-std::vector<CondPair> condvars;
 template<typename F, typename COND>
 void IterateEvents(COND cond, F callback) {
-	eventMutex.lock();
-	for (auto it = trackedEvents.begin(); it != trackedEvents.end(); it++) {
-		if (cond(*it)) {
-			condvars.push_back(CondPair());
-			CondPair* pair = &*condvars.end();
-			it->callback.BlockingCall([callback, &pair](Napi::Env env, Napi::Function jsCallback) {
+	std::vector<std::future<void>> futures;
+
+	std::unique_lock<std::mutex> eventLock(eventMutex);
+	for (auto& event : trackedEvents) {
+		if (cond(event)) {
+			auto promise = std::make_shared<std::promise<void>>();
+			futures.emplace_back(promise->get_future());
+
+			event.callback.BlockingCall([callback, promise](Napi::Env env, Napi::Function jsCallback) {
 				callback(env, jsCallback);
-				std::unique_lock<std::mutex> lock(pair->mutex);
-				pair->done = true;
-				pair->condvar.notify_all();
+				promise->set_value();
 			});
 		}
 	}
-	eventMutex.unlock();
-	for(auto it = condvars.begin(); it != condvars.end(); it++) {
-		std::unique_lock<std::mutex> lock(it->mutex);
-		while(!it->done) it->condvar.wait(lock);
+	eventLock.unlock();
+
+	// Wait for all operations to complete
+	for (auto& future : futures) {
+		future.wait();
 	}
-	condvars.clear();
 }
 
 void OSSetWindowShape(OSWindow window, std::vector<JSRectangle> rects) {
@@ -300,22 +305,23 @@ void OSNewWindowListener(OSWindow window, WindowEventType type, Napi::Function c
 	auto event = TrackedEvent(window.handle, type, callback);
 
 	// If this is a new window, request all its events from X server
-	eventMutex.lock();
+	std::unique_lock<std::mutex> eventLock(eventMutex);
 	if (window.handle != 0 && std::find_if(trackedEvents.begin(), trackedEvents.end(), [window](TrackedEvent& e) {return e.window == window.handle;}) == trackedEvents.end()) {
 		constexpr uint32_t values[] = { XCB_EVENT_MASK_STRUCTURE_NOTIFY };
 		xcb_change_window_attributes(connection, window.handle, XCB_CW_EVENT_MASK, values);
 	}
-	
+
 	// Add the event
 	trackedEvents.push_back(std::move(event));
-	eventMutex.unlock();
+	eventLock.unlock();
 
 	// Start a window thread if there wasn't already one running
 	StartWindowThread();
 }
 
 void OSRemoveWindowListener(OSWindow window, WindowEventType type, Napi::Function callback) {
-	eventMutex.lock();
+
+	std::unique_lock<std::mutex> eventLock(eventMutex);
 
 	// If there are no more tracked events for this window, request X server to stop sending any events about it
 	if (window.handle != 0 && std::find_if(trackedEvents.begin(), trackedEvents.end(), [window](TrackedEvent& e) {return e.window == window.handle;}) == trackedEvents.end()) {
@@ -342,7 +348,7 @@ void OSRemoveWindowListener(OSWindow window, WindowEventType type, Napi::Functio
 	);
 
 	wait &= trackedEvents.size() == 0;
-	eventMutex.unlock();
+	eventLock.unlock();
 
 	// If the window thread has nothing left to do, send it a wakeup, then wait for it to exit
 	if (wait) {
@@ -355,21 +361,19 @@ void OSRemoveWindowListener(OSWindow window, WindowEventType type, Napi::Functio
 }
 
 bool WindowThreadShouldRun() {
-	eventMutex.lock();
+	std::unique_lock<std::mutex> eventLock(eventMutex);
 	bool anyEvents = trackedEvents.size() != 0;
-	eventMutex.unlock();
 	return anyEvents;
 }
 
 void StartWindowThread() {
 	// Only start if there isn't already a window thread running
-	windowThreadMutex.lock();
+	std::unique_lock<std::mutex> windowThreadLock(windowThreadMutex);
 	if (!windowThreadExists) {
 		windowThreadExists = true;
 		windowThread = std::thread(WindowThread);
 		recordThread = std::thread(RecordThread);
 	}
-	windowThreadMutex.unlock();
 }
 
 // Should only be called from the window thread.
@@ -388,19 +392,20 @@ void HandleNewWindow(const xcb_window_t window, xcb_window_t parent) {
 			depth += 1;
 			free(reply);
 		}
-		rsDepthMutex.lock();
+
+		std::unique_lock<std::mutex> rsDepthLock(rsDepthMutex);
 		if (depth >= rsDepth) {
 			untrack = false;
 			rsDepth = depth;
-			rsDepthMutex.unlock();
+			rsDepthLock.unlock();
 			IterateEvents(
 				[](const TrackedEvent& e){return e.type == WindowEventType::Show && e.window == 0;},
 				[window](Napi::Env env, Napi::Function callback){callback.Call({Napi::BigInt::New(env, (uint64_t)window), Napi::Number::New(env, XCB_CREATE_NOTIFY)});}
 			);
 		} else {
-			rsDepthMutex.unlock();
+			rsDepthLock.unlock();
 		}
-		
+
 	}
 
 	if (untrack) {
@@ -414,7 +419,7 @@ void HandleNewWindow(const xcb_window_t window, xcb_window_t parent) {
 void WindowThread() {
 	// Request substructure events for root window
 	constexpr uint32_t rootValues[] = { XCB_EVENT_MASK_SUBSTRUCTURE_NOTIFY };
-    xcb_change_window_attributes(connection, rootWindow, XCB_CW_EVENT_MASK, rootValues);
+	xcb_change_window_attributes(connection, rootWindow, XCB_CW_EVENT_MASK, rootValues);
 
 	xcb_generic_event_t* event;
 	while (WindowThreadShouldRun()) {
@@ -526,12 +531,12 @@ void HitTestRecursively(xcb_window_t window, int16_t x, int16_t y, int16_t offse
 			xcb_shape_get_rectangles(connection, child, 1),
 			xcb_shape_get_rectangles(connection, child, 2),
 		};
-        xcb_shape_get_rectangles_reply_t* rectangles[3] = {
+		xcb_shape_get_rectangles_reply_t* rectangles[3] = {
 			xcb_shape_get_rectangles_reply(connection, rcookie[0], NULL),
 			xcb_shape_get_rectangles_reply(connection, rcookie[1], NULL),
 			xcb_shape_get_rectangles_reply(connection, rcookie[2], NULL),
 		};
-        if (rectangles[0] && rectangles[1] && rectangles[2]) {
+		if (rectangles[0] && rectangles[1] && rectangles[2]) {
 			for(auto j = 0; j < 3; j += 1) {
 				bool hit_shape = false;
 				auto rect_count = xcb_shape_get_rectangles_rectangles_length(rectangles[j]);
@@ -543,8 +548,8 @@ void HitTestRecursively(xcb_window_t window, int16_t x, int16_t y, int16_t offse
 				hit &= hit_shape;
 			}
 		} else {
-            hit = (x >= gx && x < (gx + gw) && y >= gy && y < (gy + gh));
-        }
+			hit = (x >= gx && x < (gx + gw) && y >= gy && y < (gy + gh));
+		}
 		free(rectangles[0]);
 		free(rectangles[1]);
 		free(rectangles[2]);
@@ -585,7 +590,8 @@ void RecordThread() {
 	xcb_record_range_t range;
 	memset(&range, 0, sizeof(xcb_record_range_t));
 	range.device_events.first = XCB_BUTTON_PRESS;
-	range.device_events.last = XCB_BUTTON_RELEASE;
+	// range.device_events.last = XCB_BUTTON_RELEASE;
+	range.device_events.last  = XCB_MOTION_NOTIFY;
 	xcb_record_client_spec_t client_spec = XCB_RECORD_CS_ALL_CLIENTS;
 	xcb_void_cookie_t cookie = xcb_record_create_context_checked(connection, id, 0, 1, 1, &client_spec, &range);
 	xcb_generic_error_t* error = xcb_request_check(connection, cookie);
@@ -621,36 +627,52 @@ void RecordThread() {
 			int data_len = xcb_record_enable_context_data_length(reply);
 			if (data_len == sizeof(xcb_button_press_event_t)) {
 				xcb_generic_event_t* ev = (xcb_generic_event_t*)data;
-				switch (ev->response_type) {
+				switch (ev->response_type & ~0x80) {
 					case XCB_BUTTON_PRESS: {
 						xcb_button_press_event_t* event = (xcb_button_press_event_t*)ev;
 						auto button = event->detail;
-						if (button >= 1 && button <= 3) {
+						if (button == 1 || button == 3) {
+							isLeftMouseDown = button == 1;
 							int16_t click_x = event->root_x;
 							int16_t click_y = event->root_y;
+							JSPoint point = JSPoint(click_x, click_y);
 							xcb_window_t hit = HitTest(click_x, click_y);
 							IterateEvents(
 								[hit](const TrackedEvent& e){return e.type == WindowEventType::Click && e.window == hit;},
-								[](Napi::Env env, Napi::Function callback){callback.Call({});}
+								[point](Napi::Env env, Napi::Function callback){
+									callback.Call({point.ToJs(env)});
+								}
 							);
-						}
-						if(button == 1){
-							isLeftMouseDown = true;
 						}
 						break;
 					}
 					case XCB_BUTTON_RELEASE: {
 						xcb_button_press_event_t* event = (xcb_button_press_event_t*)ev;
 						auto button = event->detail;
-						if(button == 1){
+						if (isLeftMouseDown && button == 1) {
 							isLeftMouseDown = false;
 						}
+						break;
+					}
+					case XCB_MOTION_NOTIFY: {
+						// std::cout << "motion notify" << std::endl;
+						xcb_motion_notify_event_t* event = (xcb_motion_notify_event_t*)ev;
+						int16_t move_x = event->root_x;
+						int16_t move_y = event->root_y;
+						JSPoint point = JSPoint(move_x, move_y);
+						xcb_window_t hit = HitTest(move_x, move_y);
+						IterateEvents(
+							[hit](const TrackedEvent& e){return e.type == WindowEventType::MouseMove && e.window == hit;},
+							[point](Napi::Env env, Napi::Function callback) {
+								callback.Call({point.ToJs(env)});
+							}
+						);
 						break;
 					}
 				}
 			}
 		}
-		free(reply);
+		if (reply) free(reply);
 	}
 
 	xcb_record_disable_context(rec_connection, id);
